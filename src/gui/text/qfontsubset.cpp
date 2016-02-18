@@ -197,13 +197,28 @@ static void checkRanges(QPdf::ByteStream &ts, QByteArray &ranges, int &nranges)
 
 QVector<int> QFontSubset::getReverseMap() const
 {
-    QVector<int> reverseMap(0x10000, 0);
-    for (uint uc = 0; uc < 0x10000; ++uc) {
+    QVector<int> reverseMap(0x20000, 0);
+    for (uint uc = 0; uc < 0x20000; ++uc) {
         int idx = glyph_indices.indexOf(fontEngine->glyphIndex(uc));
         if (idx >= 0 && !reverseMap.at(idx))
             reverseMap[idx] = uc;
     }
     return reverseMap;
+}
+
+// To handle unicode characters > 0xFFFF, some codes will be written as
+//
+const char *toUTF16BE(int u, char *buffer)
+{
+    if (u < 0x10000)
+        QPdf::toHex((ushort)u, buffer);
+    else if (u < 0x20000) {
+        // Perform unicode code point -> UTF-16BE
+        u = u - 0x10000;
+        QPdf::toHex((ushort)((u >> 10) + 0xD800), buffer);
+        QPdf::toHex((ushort)((u & 0x03FF) + 0xDC00), buffer + 4);
+    }
+    return buffer;
 }
 
 QByteArray QFontSubset::createToUnicodeMap() const
@@ -226,7 +241,7 @@ QByteArray QFontSubset::createToUnicodeMap() const
     QByteArray ranges = "<0000> <0000> <0000>\n";
     QPdf::ByteStream s(&ranges);
 
-    char buf[5];
+    char buf[9];
     for (int g = 1; g < nGlyphs(); ) {
         int uc0 = reverseMap.at(g);
         if (!uc0) {
@@ -258,14 +273,14 @@ QByteArray QFontSubset::createToUnicodeMap() const
         int endnonlinear = startLinear ? startLinear : g;
         // qDebug("    startLinear=%x endnonlinear=%x", startLinear,endnonlinear);
         if (endnonlinear > start) {
-            s << '<' << QPdf::toHex((ushort)start, buf) << "> <";
-            s << QPdf::toHex((ushort)(endnonlinear - 1), buf) << "> ";
+            s << '<' << toUTF16BE(start, buf) << "> <";
+            s << toUTF16BE(endnonlinear - 1, buf) << "> ";
             if (endnonlinear == start + 1) {
-                s << '<' << QPdf::toHex((ushort)reverseMap[start], buf) << ">\n";
+                s << '<' << toUTF16BE(reverseMap[start], buf) << ">\n";
             } else {
                 s << '[';
                 for (int i = start; i < endnonlinear; ++i) {
-                    s << '<' << QPdf::toHex((ushort)reverseMap[i], buf) << "> ";
+                    s << '<' << toUTF16BE(reverseMap[i], buf) << "> ";
                 }
                 s << "]\n";
             }
@@ -278,9 +293,9 @@ QByteArray QFontSubset::createToUnicodeMap() const
                 int uc_end = uc_start + len - 1;
                 if ((uc_end >> 8) != (uc_start >> 8))
                     len = 256 - (uc_start & 0xff);
-                s << '<' << QPdf::toHex((ushort)startLinear, buf) << "> <";
-                s << QPdf::toHex((ushort)(startLinear + len - 1), buf) << "> ";
-                s << '<' << QPdf::toHex((ushort)reverseMap[startLinear], buf) << ">\n";
+                s << '<' << toUTF16BE(startLinear, buf) << "> <";
+                s << toUTF16BE(startLinear + len - 1, buf) << "> ";
+                s << '<' << toUTF16BE(reverseMap[startLinear], buf) << ">\n";
                 checkRanges(ts, ranges, nranges);
                 startLinear += len;
             }
